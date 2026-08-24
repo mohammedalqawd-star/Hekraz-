@@ -5,16 +5,21 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from cyberguard.storage import Storage
 from cyberguard.admin_service import AdminService
 from cyberguard.lab_buttons import callback as lab_callback, show_labs
-from cyberguard.education import TOOLS, tool_text
+from cyberguard.education import TOOLS, RUNNABLE, tool_text
+from cyberguard.tool_runner import run as run_tool, file_hash
 from cyberguard.ctf import CTFEngine
 
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "8960865438"))
 DB = os.getenv("DB_PATH", "cyberguard.db")
 storage = Storage(DB)
 admin_service = AdminService(storage)
 ctf = CTFEngine()
+
+
+def is_admin(uid: int) -> bool:
+    return uid == ADMIN_ID or admin_service.is_admin(uid)
 
 
 def main_menu():
@@ -58,47 +63,66 @@ def challenge_menu(challenges):
 
 
 TEXT = {
- "defensive": ("🛡️ الأمن الدفاعي", "كشف التهديدات، تحليل السجلات، التقوية والاستجابة."),
- "offensive": ("🔴 اختبار الاختراق التعليمي", "تعلم الاستطلاع والتعداد وتقييم المخاطر ومفاهيم الويب والشبكات داخل Cyber Range معزول فقط. لا توجد عمليات اختراق حقيقية ضد أهداف خارجية."),
- "web": ("🌍 أمن الويب", "OWASP Top 10: الشرح، الاكتشاف داخل المختبر، الأثر، الحماية والإصلاح."),
- "network": ("🌐 أمن الشبكات", "DNS وHTTP وTLS وتحليل الحركة والجدران النارية وIDS/IPS."),
- "ai": ("🧠 Cyber AI", "شرح السجلات والتنبيهات والمفاهيم الأمنية والكود الآمن."),
- "mitre": ("🎯 MITRE ATT&CK", "تعلم التكتيكات والتقنيات مع الكشف والتخفيف."),
- "ir": ("🚨 الاستجابة للحوادث", "كشف وتحقيق واحتواء وقضاء واسترداد وتقرير."),
- "malware": ("🦠 تحليل البرمجيات", "Hash وMetadata وStrings وIOC ومفاهيم YARA والتحليل الثابت داخل المختبر. لا إنشاء أو نشر برمجيات خبيثة."),
- "reports": ("📊 التقارير", "تنظيم النتائج والمخاطر والتوصيات في تقارير تدريبية."),
- "account": ("👤 حسابي", "معرف Telegram وسجل النشاط التعليمي."),
+    "defensive": ("🛡️ الأمن الدفاعي", "كشف التهديدات، تحليل السجلات، التقوية والاستجابة."),
+    "offensive": ("🔴 اختبار الاختراق التعليمي", "تعلم الاستطلاع والتعداد وتقييم المخاطر ومفاهيم الويب والشبكات داخل Cyber Range معزول فقط. لا توجد عمليات اختراق حقيقية ضد أهداف خارجية."),
+    "web": ("🌍 أمن الويب", "OWASP Top 10: الشرح، الاكتشاف داخل المختبر، الأثر، الحماية والإصلاح."),
+    "network": ("🌐 أمن الشبكات", "DNS وHTTP وTLS وتحليل الحركة والجدران النارية وIDS/IPS."),
+    "ai": ("🧠 Cyber AI", "شرح السجلات والتنبيهات والمفاهيم الأمنية والكود الآمن."),
+    "mitre": ("🎯 MITRE ATT&CK", "تعلم التكتيكات والتقنيات مع الكشف والتخفيف."),
+    "ir": ("🚨 الاستجابة للحوادث", "كشف وتحقيق واحتواء وقضاء واسترداد وتقرير."),
+    "malware": ("🦠 تحليل البرمجيات", "Hash وMetadata وStrings وIOC ومفاهيم YARA والتحليل الثابت داخل المختبر. لا إنشاء أو نشر برمجيات خبيثة."),
+    "reports": ("📊 التقارير", "تنظيم النتائج والمخاطر والتوصيات في تقارير تدريبية."),
+    "account": ("👤 حسابي", "معرف Telegram وسجل النشاط التعليمي."),
 }
 
 
 def tools_menu():
-    keys = list(TOOLS)
-    rows = [[InlineKeyboardButton(TOOLS[k][0], callback_data=f"tool:{k}") for k in keys[i:i+2]] for i in range(0, len(keys), 2)]
+    rows = []
+    for key, item in TOOLS.items():
+        rows.append([InlineKeyboardButton(item[0], callback_data=f"tool:{key}")])
     rows.append([InlineKeyboardButton("⬅️ الرئيسية", callback_data="home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def tool_actions(key: str):
+    rows = []
+    if key in RUNNABLE:
+        rows.append([InlineKeyboardButton("▶️ تشغيل فعلي داخل المختبر", callback_data=f"toolrun:{key}")])
+    if key == "file_hash":
+        rows.append([InlineKeyboardButton("🔐 تحليل ملف محلي", callback_data="toolrun:file_hash")])
+    rows.append([InlineKeyboardButton("⬅️ مركز الأدوات", callback_data="tools")])
     return InlineKeyboardMarkup(rows)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     storage.ensure_user(u.id, "admin" if u.id == ADMIN_ID else "user")
+    if u.id == ADMIN_ID:
+        storage.set_role(u.id, "admin")
     storage.audit(u.id, "start")
     await update.message.reply_text("🛡️ CyberGuard AI\n\nمنصة تعليمية للأمن السيبراني وCyber Range وCTF.\n\n⚠️ الاستخدام العملي للمختبرات المعزولة أو الأنظمة المصرح بها فقط.", reply_markup=main_menu())
 
 
 async def labs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    storage.ensure_user(update.effective_user.id, "admin" if update.effective_user.id == ADMIN_ID else "user")
+    uid = update.effective_user.id
+    storage.ensure_user(uid, "admin" if uid == ADMIN_ID else "user")
+    if uid == ADMIN_ID:
+        storage.set_role(uid, "admin")
     await show_labs(update, context)
 
 
 async def tools_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🧰 مركز الأدوات\n\nاختر أداة لمعرفة وظيفتها واستخدامها الآمن:", reply_markup=tools_menu())
+    await update.message.reply_text("🧰 مركز الأدوات\n\nاختر أداة. الأدوات ذات زر التشغيل تنفذ فحصًا دفاعيًا فعليًا داخل localhost/loopback فقط.", reply_markup=tools_menu())
 
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     storage.ensure_user(uid, "admin" if uid == ADMIN_ID else "user")
-    if not admin_service.is_admin(uid):
-        await update.message.reply_text("⛔ هذا الأمر للمشرف فقط."); return
+    if uid == ADMIN_ID:
+        storage.set_role(uid, "admin")
+    if not is_admin(uid):
+        await update.message.reply_text("⛔ هذا الأمر للمشرف فقط.")
+        return
     await update.message.reply_text("👑 CyberGuard AI — لوحة الإدارة", reply_markup=admin_menu())
 
 
@@ -107,75 +131,110 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     uid = q.from_user.id
     storage.ensure_user(uid, "admin" if uid == ADMIN_ID else "user")
+    if uid == ADMIN_ID:
+        storage.set_role(uid, "admin")
     storage.audit(uid, q.data)
 
     if q.data.startswith("lab:"):
-        await lab_callback(update, context); return
+        await lab_callback(update, context)
+        return
     if q.data == "labs":
         from cyberguard.lab_buttons import keyboard
-        await q.edit_message_text("🧪 Cyber Range\n\nمختبرات تدريب معزولة:", reply_markup=keyboard()); return
+        await q.edit_message_text("🧪 Cyber Range\n\nمختبرات تدريب معزولة:", reply_markup=keyboard())
+        return
     if q.data == "ctf":
-        await q.edit_message_text("🏆 CTF Academy\n\nاختر المستوى أو اعرض نقاطك:\n\n🧪 جميع التحديات تعمل محليًا داخل بيئة تدريبية.", reply_markup=ctf_menu()); return
+        await q.edit_message_text("🏆 CTF Academy\n\nاختر المستوى أو اعرض نقاطك:\n\n🧪 جميع التحديات تعمل محليًا داخل بيئة تدريبية.", reply_markup=ctf_menu())
+        return
     if q.data.startswith("ctf_level:"):
         level = q.data.split(":", 1)[1]
         challenges = ctf.list(level)
         if not challenges:
-            await q.edit_message_text(f"🏆 {level}\n\nلا توجد تحديات بهذا المستوى حاليًا.", reply_markup=ctf_menu()); return
-        await q.edit_message_text(f"🏆 تحديات {level}\n\nاختر تحديًا:", reply_markup=challenge_menu(challenges)); return
+            await q.edit_message_text(f"🏆 {level}\n\nلا توجد تحديات بهذا المستوى حاليًا.", reply_markup=ctf_menu())
+            return
+        await q.edit_message_text(f"🏆 تحديات {level}\n\nاختر تحديًا:", reply_markup=challenge_menu(challenges))
+        return
     if q.data.startswith("ctf_challenge:"):
         challenge_id = q.data.split(":", 1)[1]
         c = ctf.get(challenge_id)
         if not c:
-            await q.edit_message_text("❌ التحدي غير موجود.", reply_markup=ctf_menu()); return
+            await q.edit_message_text("❌ التحدي غير موجود.", reply_markup=ctf_menu())
+            return
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("💡 Hint", callback_data=f"ctf_hint:{c.id}")],
             [InlineKeyboardButton("📝 إرسال الإجابة", callback_data=f"ctf_submit:{c.id}")],
             [InlineKeyboardButton("⬅️ التحديات", callback_data=f"ctf_level:{c.level}")],
         ])
-        await q.edit_message_text(f"🧩 {c.title}\n\n🎯 الهدف:\n{c.goal}\n\n📚 المستوى: {c.level}\n\n⚠️ التحدي تدريبي محلي ولا يستهدف أنظمة خارجية.", reply_markup=keyboard); return
+        await q.edit_message_text(f"🧩 {c.title}\n\n🎯 الهدف:\n{c.goal}\n\n📚 المستوى: {c.level}\n\n⚠️ التحدي تدريبي محلي ولا يستهدف أنظمة خارجية.", reply_markup=keyboard)
+        return
     if q.data.startswith("ctf_hint:"):
         c = ctf.get(q.data.split(":", 1)[1])
-        await q.edit_message_text(f"💡 Hint\n\n{c.hint if c else 'التحدي غير موجود.'}", reply_markup=ctf_menu()); return
+        await q.edit_message_text(f"💡 Hint\n\n{c.hint if c else 'التحدي غير موجود.'}", reply_markup=ctf_menu())
+        return
     if q.data.startswith("ctf_submit:"):
         challenge_id = q.data.split(":", 1)[1]
         context.user_data["ctf_waiting"] = challenge_id
-        await q.edit_message_text("📝 أرسل إجابتك الآن في رسالة نصية.\n\n/cancel للإلغاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ CTF", callback_data="ctf")]])); return
+        await q.edit_message_text("📝 أرسل إجابتك الآن في رسالة نصية.\n\n/cancel للإلغاء.", reply_markup=back())
+        return
     if q.data == "ctf_score":
-        await q.edit_message_text(f"🏆 نقاطك الحالية: {ctf.score(uid)}", reply_markup=ctf_menu()); return
+        await q.edit_message_text(f"🏆 نقاطك الحالية: {ctf.score(uid)}", reply_markup=ctf_menu())
+        return
     if q.data == "tools":
-        await q.edit_message_text("🧰 مركز الأدوات\n\nكل بطاقة تشرح الأداة ومهمتها ومتطلباتها:", reply_markup=tools_menu()); return
+        await q.edit_message_text("🧰 مركز الأدوات\n\nكل أداة تعرض شرحها، وتظهر وظيفة تشغيل حقيقية عندما تكون متاحة بأمان.", reply_markup=tools_menu())
+        return
+    if q.data.startswith("toolrun:"):
+        key = q.data.split(":", 1)[1]
+        if key not in RUNNABLE:
+            await q.edit_message_text("ℹ️ هذه الأداة تعليمية حاليًا ولا تحتوي على تشغيل مباشر.", reply_markup=tool_actions(key))
+            return
+        context.user_data["tool_waiting"] = key
+        prompt = "📍 أرسل عنوان المختبر مثل 127.0.0.1:8000 أو localhost:8000.\n\n⚠️ التنفيذ محصور بالـ localhost/loopback."
+        if key == "file_hash":
+            prompt = "📄 أرسل مسار ملف محلي لتحليل SHA-256.\nمثال: ./sample.txt"
+        await q.edit_message_text(prompt, reply_markup=back())
+        return
     if q.data.startswith("tool:"):
-        await q.edit_message_text(tool_text(q.data.split(":",1)[1]), reply_markup=tools_menu()); return
+        key = q.data.split(":", 1)[1]
+        await q.edit_message_text(tool_text(key), reply_markup=tool_actions(key))
+        return
     if q.data == "admin":
-        if not admin_service.is_admin(uid):
-            await q.edit_message_text("⛔ للمشرف فقط.", reply_markup=back()); return
-        await q.edit_message_text("👑 لوحة إدارة CyberGuard AI\n\nاختر إجراءً:", reply_markup=admin_menu()); return
+        if not is_admin(uid):
+            await q.edit_message_text("⛔ للمشرف فقط.", reply_markup=back())
+            return
+        await q.edit_message_text("👑 لوحة إدارة CyberGuard AI\n\nاختر إجراءً:", reply_markup=admin_menu())
+        return
     if q.data == "home":
-        await q.edit_message_text("🛡️ CyberGuard AI\n\nاختر قسمًا:", reply_markup=main_menu()); return
+        await q.edit_message_text("🛡️ CyberGuard AI\n\nاختر قسمًا:", reply_markup=main_menu())
+        return
     if q.data.startswith("admin_"):
-        if not admin_service.is_admin(uid):
-            await q.edit_message_text("⛔ للمشرف فقط.", reply_markup=back()); return
-        await admin_callback(q, context); return
+        if not is_admin(uid):
+            await q.edit_message_text("⛔ للمشرف فقط.", reply_markup=back())
+            return
+        await admin_callback(q, context)
+        return
     title, body = TEXT.get(q.data, ("غير متاح", "هذه الوظيفة غير متاحة حاليًا."))
     await q.edit_message_text(f"{title}\n\n📌 المهمة\n{body}\n\n🔐 التنفيذ العملي محصور بالمختبرات المعزولة والأنظمة المصرح بها.", reply_markup=back())
 
 
 async def admin_callback(q, context):
-    uid = q.from_user.id; action = q.data
+    uid = q.from_user.id
+    action = q.data
     if action == "admin_stats":
-        users = admin_service.users(uid); audits = admin_service.audit_logs(uid, 100000)
+        users = admin_service.users(uid)
+        audits = admin_service.audit_logs(uid, 100000)
         await q.edit_message_text(f"📊 الإحصائيات\n\n👥 المستخدمون: {len(users)}\n🧾 التدقيق: {len(audits)}", reply_markup=admin_menu())
     elif action == "admin_users":
-        rows = admin_service.users(uid); text = "👥 المستخدمون\n\n" + ("\n".join(f"• `{x}` — {r}" for x,r,_ in rows[:30]) or "لا يوجد مستخدمون.")
+        rows = admin_service.users(uid)
+        text = "👥 المستخدمون\n\n" + ("\n".join(f"• `{x}` — {r}" for x, r, _ in rows[:30]) or "لا يوجد مستخدمون.")
         await q.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_menu())
     elif action == "admin_roles":
         await q.edit_message_text("🔐 الأدوار\n\nuser — مستخدم\nanalyst — محلل\nadmin — مدير\n\n/setrole USER_ID ROLE", reply_markup=admin_menu())
     elif action == "admin_labs":
         await q.edit_message_text("🧪 إدارة المختبرات المعزولة من قسم المختبر.", reply_markup=admin_menu())
     elif action == "admin_auth":
-        await q.edit_message_text("📋 التفويضات\n\nسجّل نطاق ومدة التفويض قبل أي اختبار عملي. لا ينفذ البوت اختراقًا حقيقيًا على أهداف خارجية.", reply_markup=admin_menu())
+        await q.edit_message_text("📋 التفويضات\n\nسجّل نطاق ومدة التفويض قبل أي اختبار عملي. التنفيذ المباشر محصور بالمختبرات المعزولة.", reply_markup=admin_menu())
     elif action == "admin_audit":
-        rows = admin_service.audit_logs(uid, 20); text = "🧾 آخر السجلات\n\n" + ("\n".join(f"• {u} — {a} — {c}" for u,a,_,c in rows) or "لا توجد سجلات.")
+        rows = admin_service.audit_logs(uid, 20)
+        text = "🧾 آخر السجلات\n\n" + ("\n".join(f"• {u} — {a} — {c}" for u, a, _, c in rows) or "لا توجد سجلات.")
         await q.edit_message_text(text[:4000], reply_markup=admin_menu())
     elif action == "admin_broadcast":
         context.user_data["awaiting_broadcast"] = True
@@ -184,20 +243,45 @@ async def admin_callback(q, context):
 
 async def setrole(update: Update, context: ContextTypes.DEFAULT_TYPE):
     actor = update.effective_user.id
-    if not admin_service.is_admin(actor): await update.message.reply_text("⛔ للمشرف فقط."); return
-    if len(context.args) != 2: await update.message.reply_text("/setrole USER_ID user|analyst|admin"); return
-    try: admin_service.set_role(actor, int(context.args[0]), context.args[1]); await update.message.reply_text("✅ تم تحديث الدور.")
-    except (ValueError, PermissionError) as e: await update.message.reply_text(f"❌ {e}")
+    if not is_admin(actor):
+        await update.message.reply_text("⛔ للمشرف فقط.")
+        return
+    if len(context.args) != 2:
+        await update.message.reply_text("/setrole USER_ID user|analyst|admin")
+        return
+    try:
+        admin_service.set_role(actor, int(context.args[0]), context.args[1])
+        await update.message.reply_text("✅ تم تحديث الدور.")
+    except (ValueError, PermissionError) as e:
+        await update.message.reply_text(f"❌ {e}")
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("awaiting_broadcast", None)
     context.user_data.pop("ctf_waiting", None)
+    context.user_data.pop("tool_waiting", None)
     await update.message.reply_text("تم الإلغاء.")
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+
+    tool_waiting = context.user_data.get("tool_waiting")
+    if tool_waiting:
+        target = update.message.text.strip()
+        context.user_data.pop("tool_waiting", None)
+        try:
+            if tool_waiting == "file_hash":
+                result = file_hash(target)
+            else:
+                result = run_tool(tool_waiting, target)
+            storage.audit(uid, "tool_run", f"tool={tool_waiting};target={target[:120]}")
+            await update.message.reply_text("✅ نتيجة الأداة\n\n" + result, reply_markup=tools_menu())
+        except Exception as e:
+            storage.audit(uid, "tool_error", f"tool={tool_waiting};error={type(e).__name__}")
+            await update.message.reply_text(f"❌ تعذر التنفيذ\n\n{e}", reply_markup=tools_menu())
+        return
+
     waiting = context.user_data.get("ctf_waiting")
     if waiting:
         ok = ctf.submit(uid, waiting, update.message.text)
@@ -208,25 +292,34 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ إجابة غير صحيحة. جرّب مرة أخرى من خلال اختيار التحدي.", reply_markup=ctf_menu())
         return
+
     if context.user_data.get("awaiting_broadcast"):
-        if not admin_service.is_admin(uid):
-            context.user_data.pop("awaiting_broadcast", None); return
+        if not is_admin(uid):
+            context.user_data.pop("awaiting_broadcast", None)
+            return
         context.user_data.pop("awaiting_broadcast", None)
         sent = failed = 0
         for target, _, _ in admin_service.users(uid):
             try:
-                await context.bot.send_message(chat_id=target, text=update.message.text); sent += 1
+                await context.bot.send_message(chat_id=target, text=update.message.text)
+                sent += 1
             except Exception:
                 failed += 1
         storage.audit(uid, "broadcast", f"sent={sent},failed={failed}")
         await update.message.reply_text(f"📢 اكتمل الإرسال\n\n✅ {sent}  ⚠️ {failed}")
 
 
+async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"🆔 Telegram ID: {update.effective_user.id}\n👤 Username: @{update.effective_user.username or 'لا يوجد'}")
+
+
 if __name__ == "__main__":
-    if not TOKEN: raise RuntimeError("BOT_TOKEN غير موجود في متغيرات البيئة")
+    if not TOKEN:
+        raise RuntimeError("BOT_TOKEN غير موجود في متغيرات البيئة")
     storage.init()
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("myid", myid))
     app.add_handler(CommandHandler("labs", labs_command))
     app.add_handler(CommandHandler("tools", tools_command))
     app.add_handler(CommandHandler("admin", admin_command))
