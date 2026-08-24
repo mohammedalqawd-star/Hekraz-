@@ -83,9 +83,9 @@ def dns_lookup(target: str) -> str:
 
 def tls_inspect(target: str) -> str:
     value = target.strip()
+    raw_host = value.split("://", 1)[-1].split("/", 1)[0]
     host = _local_target(value)
     port = 443
-    raw_host = value.split("://", 1)[-1].split("/", 1)[0]
     if ":" in raw_host and not raw_host.startswith("["):
         host, port_text = raw_host.rsplit(":", 1)
         port = int(port_text)
@@ -115,8 +115,7 @@ def file_hash(path: str) -> str:
 def nmap_scan(target: str) -> str:
     host = _local_target(target)
     if not shutil.which("nmap"):
-        return "❌ Nmap غير مثبت. ثبّت حزمة nmap في بيئة المختبر ثم أعد المحاولة."
-    # Safe lab-only service discovery: loopback host, no exploitation scripts.
+        return "❌ Nmap غير مثبت."
     return "🧰 Nmap — فحص المختبر\n\n" + _run(["nmap", "-sV", "-Pn", "--top-ports", "100", "-T2", host], 45)
 
 
@@ -131,20 +130,23 @@ def tshark_capture(target: str) -> str:
     _local_target(target)
     if not shutil.which("tshark"):
         return "❌ TShark غير مثبت."
-    # Bounded loopback capture only; no remote interface selection.
-    return "🧰 Wireshark/TShark — التقاط loopback لمدة 5 ثوانٍ\n\n" + _run([
+    return "🧰 Wireshark/TShark — loopback لمدة 5 ثوانٍ\n\n" + _run([
         "tshark", "-i", "lo", "-a", "duration:5", "-c", "50", "-T", "fields",
         "-e", "frame.number", "-e", "ip.src", "-e", "ip.dst", "-e", "tcp.dstport",
     ], 12)
 
 
 def yara_scan(target: str) -> str:
-    p = Path(target).expanduser().resolve()
-    if not p.is_file():
-        raise ValueError("أرسل مسار ملف YARA rule أو ملفًا مناسبًا للمختبر")
+    if "|" not in target:
+        raise ValueError("الصيغة: /مسار/rule.yar|/مسار/الملف")
+    rule_text, sample_text = [x.strip() for x in target.split("|", 1)]
+    rule = Path(rule_text).expanduser().resolve()
+    sample = Path(sample_text).expanduser().resolve()
+    if not rule.is_file() or not sample.exists():
+        raise ValueError("ملف القاعدة أو الملف المراد فحصه غير موجود")
     if not shutil.which("yara"):
         return "❌ YARA غير مثبت."
-    return "🧰 YARA\n\n" + _run(["yara", str(p), str(p)], 20)
+    return "🧰 YARA\n\n" + _run(["yara", str(rule), str(sample)], 20)
 
 
 def bandit_scan(target: str) -> str:
