@@ -1,6 +1,6 @@
 """Authorization gate for local Cyber Range operations."""
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import secrets
 from urllib.parse import urlparse
 
@@ -40,7 +40,7 @@ def issue_authorization(user_id: int, target: str, scope: str = "CTF/LAB", ttl_h
         target=target,
         scope=scope,
         starts_at=now,
-        expires_at=now.replace(hour=(now.hour + ttl_hours) % 24),
+        expires_at=now + timedelta(hours=ttl_hours),
     )
 
 def is_target_authorized(auth: Authorization, target: str, user_id: int) -> bool:
