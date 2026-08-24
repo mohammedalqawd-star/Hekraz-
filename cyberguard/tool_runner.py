@@ -1,14 +1,16 @@
 """Safe runtime tools for CyberGuard AI.
 
-Runtime execution is deliberately restricted to localhost/loopback targets.
-The module performs defensive inspection only; it does not exploit targets.
+All network execution is restricted to localhost/loopback. External targets are rejected.
+The module performs defensive inspection and lab scanning; it does not exploit targets.
 """
 from __future__ import annotations
 
 import hashlib
 import ipaddress
+import shutil
 import socket
 import ssl
+import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -27,12 +29,33 @@ def _local_target(target: str) -> str:
             return host
     except ValueError:
         pass
-    raise ValueError("التنفيذ العملي لهذه الأداة محصور في localhost/127.0.0.1")
+    raise ValueError("التنفيذ العملي محصور في localhost/127.0.0.1")
+
+
+def _local_url(target: str, default_scheme: str = "http") -> str:
+    value = target.strip()
+    if "://" not in value:
+        value = f"{default_scheme}://{value}"
+    _local_target(value)
+    return value
+
+
+def _run(cmd: list[str], timeout: int = 30) -> str:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        output = (p.stdout + ("\n" + p.stderr if p.stderr else "")).strip()
+        return output or f"انتهى التنفيذ برمز {p.returncode}"
+    except FileNotFoundError:
+        return f"❌ البرنامج غير مثبت: {cmd[0]}"
+    except subprocess.TimeoutExpired:
+        return "⏱️ انتهى الوقت المحدد للأداة."
+    except Exception as e:
+        return f"❌ فشل التنفيذ: {type(e).__name__}: {e}"
 
 
 def http_headers(target: str) -> str:
     host = _local_target(target)
-    url = target if "://" in target else f"http://{target}"
+    url = _local_url(target)
     req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "CyberGuard-AI-Lab/1.0"})
     try:
         with urllib.request.urlopen(req, timeout=8) as response:
@@ -59,10 +82,12 @@ def dns_lookup(target: str) -> str:
 
 
 def tls_inspect(target: str) -> str:
-    host = _local_target(target)
+    value = target.strip()
+    host = _local_target(value)
     port = 443
-    if ":" in host and not host.startswith("["):
-        host, port_text = host.rsplit(":", 1)
+    raw_host = value.split("://", 1)[-1].split("/", 1)[0]
+    if ":" in raw_host and not raw_host.startswith("["):
+        host, port_text = raw_host.rsplit(":", 1)
         port = int(port_text)
     ctx = ssl.create_default_context()
     try:
@@ -87,6 +112,51 @@ def file_hash(path: str) -> str:
     return f"🦠 File Analyzer\n\n📄 الملف: {p.name}\n📦 الحجم: {size} bytes\n🔐 SHA-256: {h.hexdigest()}"
 
 
+def nmap_scan(target: str) -> str:
+    host = _local_target(target)
+    if not shutil.which("nmap"):
+        return "❌ Nmap غير مثبت. ثبّت حزمة nmap في بيئة المختبر ثم أعد المحاولة."
+    # Safe lab-only service discovery: loopback host, no exploitation scripts.
+    return "🧰 Nmap — فحص المختبر\n\n" + _run(["nmap", "-sV", "-Pn", "--top-ports", "100", "-T2", host], 45)
+
+
+def zap_scan(target: str) -> str:
+    url = _local_url(target)
+    if not shutil.which("zap-baseline.py"):
+        return "❌ OWASP ZAP غير مثبت أو zap-baseline.py غير موجود."
+    return "🧰 OWASP ZAP — فحص محلي\n\n" + _run(["zap-baseline.py", "-t", url, "-m", "2"], 90)
+
+
+def tshark_capture(target: str) -> str:
+    _local_target(target)
+    if not shutil.which("tshark"):
+        return "❌ TShark غير مثبت."
+    # Bounded loopback capture only; no remote interface selection.
+    return "🧰 Wireshark/TShark — التقاط loopback لمدة 5 ثوانٍ\n\n" + _run([
+        "tshark", "-i", "lo", "-a", "duration:5", "-c", "50", "-T", "fields",
+        "-e", "frame.number", "-e", "ip.src", "-e", "ip.dst", "-e", "tcp.dstport",
+    ], 12)
+
+
+def yara_scan(target: str) -> str:
+    p = Path(target).expanduser().resolve()
+    if not p.is_file():
+        raise ValueError("أرسل مسار ملف YARA rule أو ملفًا مناسبًا للمختبر")
+    if not shutil.which("yara"):
+        return "❌ YARA غير مثبت."
+    return "🧰 YARA\n\n" + _run(["yara", str(p), str(p)], 20)
+
+
+def bandit_scan(target: str) -> str:
+    p = Path(target).expanduser().resolve()
+    if not p.exists():
+        raise ValueError("مسار المشروع غير موجود")
+    exe = shutil.which("bandit")
+    if not exe:
+        return "❌ Bandit غير مثبت."
+    return "🧰 Bandit\n\n" + _run([exe, "-r", str(p), "-f", "txt"], 60)
+
+
 def run(tool_id: str, target: str) -> str:
     if tool_id == "web_headers":
         return http_headers(target)
@@ -94,4 +164,16 @@ def run(tool_id: str, target: str) -> str:
         return dns_lookup(target)
     if tool_id == "tls_inspector":
         return tls_inspect(target)
+    if tool_id == "file_hash":
+        return file_hash(target)
+    if tool_id == "nmap":
+        return nmap_scan(target)
+    if tool_id == "zap":
+        return zap_scan(target)
+    if tool_id == "wireshark":
+        return tshark_capture(target)
+    if tool_id == "yara":
+        return yara_scan(target)
+    if tool_id == "bandit":
+        return bandit_scan(target)
     raise ValueError("الأداة غير مدعومة للتنفيذ")
