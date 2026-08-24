@@ -121,9 +121,13 @@ def nmap_scan(target: str) -> str:
 
 def zap_scan(target: str) -> str:
     url = _local_url(target)
-    if not shutil.which("zap-baseline.py"):
-        return "❌ OWASP ZAP غير مثبت أو zap-baseline.py غير موجود."
-    return "🧰 OWASP ZAP — فحص محلي\n\n" + _run(["zap-baseline.py", "-t", url, "-m", "2"], 90)
+    baseline = shutil.which("zap-baseline.py")
+    if baseline:
+        return "🧰 OWASP ZAP — فحص محلي\n\n" + _run([baseline, "-t", url, "-m", "2"], 90)
+    zap = shutil.which("zap.sh")
+    if zap:
+        return "🧰 OWASP ZAP — فحص محلي\n\n" + _run([zap, "-cmd", "-quickurl", url, "-quickprogress"], 90)
+    return "❌ OWASP ZAP غير مثبت."
 
 
 def tshark_capture(target: str) -> str:
