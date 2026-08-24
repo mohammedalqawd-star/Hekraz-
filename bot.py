@@ -6,6 +6,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from cyberguard.storage import Storage
 from cyberguard.admin_service import AdminService
+from cyberguard.lab_buttons import callback as lab_callback, show_labs
 
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.getenv("BOT_TOKEN")
@@ -40,10 +41,8 @@ def admin_menu():
         [InlineKeyboardButton("⬅️ الرئيسية", callback_data="home")],
     ])
 
-
 TEXT = {
     "defensive": ("🛡️ الأمن الدفاعي", "تحليل السجلات، كشف التهديدات، تقوية الأنظمة، وإرشادات الاستجابة."),
-    "labs": ("🧪 المختبرات", "مختبرات تدريب معزولة وCTF لتعلم الاختبار الأمني دون استهداف أنظمة حقيقية."),
     "web": ("🌍 أمن الويب", "شرح OWASP Top 10، طرق الاكتشاف داخل المختبر، الأثر، الحماية والإصلاح."),
     "network": ("🌐 أمن الشبكات", "مفاهيم DNS وHTTP وTLS وحركة المرور والجدران النارية وIDS/IPS."),
     "ctf": ("🏆 CTF Academy", "مسارات Beginner وIntermediate وAdvanced مع تحديات تدريبية آمنة."),
@@ -56,7 +55,6 @@ TEXT = {
     "account": ("👤 حسابي", "حساب Telegram وسجل الأنشطة التعليمية."),
 }
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     storage.ensure_user(user.id, "admin" if user.id == ADMIN_ID else "user")
@@ -66,6 +64,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu(),
     )
 
+async def labs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    storage.ensure_user(update.effective_user.id, "admin" if update.effective_user.id == ADMIN_ID else "user")
+    await show_labs(update, context)
 
 async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -73,6 +74,14 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = q.from_user.id
     storage.ensure_user(user_id, "admin" if user_id == ADMIN_ID else "user")
     storage.audit(user_id, q.data)
+
+    if q.data.startswith("lab:"):
+        await lab_callback(update, context)
+        return
+
+    if q.data == "labs":
+        await q.edit_message_text("🧪 Cyber Range\n\nمختبرات تدريب معزولة. اختر العملية:", reply_markup=__import__('cyberguard.lab_buttons', fromlist=['keyboard']).keyboard())
+        return
 
     if q.data == "home":
         await q.edit_message_text("🛡️ CyberGuard AI\n\nاختر قسمًا:", reply_markup=main_menu())
@@ -86,11 +95,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     title, body = TEXT.get(q.data, ("غير متاح", "هذه الوظيفة غير متاحة حاليًا."))
-    await q.edit_message_text(
-        f"{title}\n\n📌 ماذا يفعل؟\n{body}\n\n🔐 الاستخدام العملي محصور بالمختبرات المعزولة والأنظمة المصرح بها.",
-        reply_markup=back_menu(),
-    )
-
+    await q.edit_message_text(f"{title}\n\n📌 ماذا يفعل؟\n{body}\n\n🔐 الاستخدام العملي محصور بالمختبرات المعزولة والأنظمة المصرح بها.", reply_markup=back_menu())
 
 async def admin_callback(q, context):
     user_id = q.from_user.id
@@ -101,15 +106,12 @@ async def admin_callback(q, context):
         await q.edit_message_text(f"📊 الإحصائيات\n\n👥 المستخدمون: {len(users)}\n🧾 سجلات التدقيق: {len(audits)}", reply_markup=admin_menu())
     elif action == "admin_users":
         rows = admin_service.users(user_id)
-        if not rows:
-            text = "👥 لا يوجد مستخدمون بعد."
-        else:
-            text = "👥 المستخدمون\n\n" + "\n".join(f"• `{uid}` — {role}" for uid, role, _ in rows[:30])
+        text = "👥 المستخدمون\n\n" + ("\n".join(f"• `{uid}` — {role}" for uid, role, _ in rows[:30]) or "لا يوجد مستخدمون بعد.")
         await q.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_menu())
     elif action == "admin_roles":
-        await q.edit_message_text("🔐 الأدوار\n\nuser — مستخدم\nanalyst — محلل\nadmin — مدير\n\nلتغيير دور مستخدم استخدم:\n/setrole USER_ID ROLE", reply_markup=admin_menu())
+        await q.edit_message_text("🔐 الأدوار\n\nuser — مستخدم\nanalyst — محلل\nadmin — مدير\n\nلتغيير دور مستخدم:\n/setrole USER_ID ROLE", reply_markup=admin_menu())
     elif action == "admin_labs":
-        await q.edit_message_text("🧪 المختبرات\n\nإدارة المختبرات المعزولة متاحة من وحدة المختبر. لا يتم تشغيل أهداف حقيقية من لوحة الإدارة.", reply_markup=admin_menu())
+        await q.edit_message_text("🧪 المختبرات\n\nإدارة المختبرات المعزولة متاحة من قسم المختبر.", reply_markup=admin_menu())
     elif action == "admin_auth":
         await q.edit_message_text("📋 التفويضات\n\nبوابة التفويض مخصصة لتسجيل نطاق ومدة الاختبار. التنفيذ الهجومي على أهداف حقيقية غير متاح.", reply_markup=admin_menu())
     elif action == "admin_audit":
@@ -120,7 +122,6 @@ async def admin_callback(q, context):
         context.user_data["awaiting_broadcast"] = True
         await q.edit_message_text("📢 أرسل الآن الرسالة التي تريد إرسالها لجميع مستخدمي البوت.\n\nاكتب /cancel للإلغاء.", reply_markup=admin_menu())
 
-
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     storage.ensure_user(user_id, "admin" if user_id == ADMIN_ID else "user")
@@ -128,7 +129,6 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ هذا الأمر للمشرف فقط.")
         return
     await update.message.reply_text("👑 CyberGuard AI — لوحة الإدارة", reply_markup=admin_menu())
-
 
 async def setrole(update: Update, context: ContextTypes.DEFAULT_TYPE):
     actor = update.effective_user.id
@@ -139,17 +139,14 @@ async def setrole(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("الاستخدام: /setrole USER_ID user|analyst|admin")
         return
     try:
-        target = int(context.args[0])
-        admin_service.set_role(actor, target, context.args[1])
+        admin_service.set_role(actor, int(context.args[0]), context.args[1])
         await update.message.reply_text("✅ تم تحديث الدور.")
     except (ValueError, PermissionError) as exc:
         await update.message.reply_text(f"❌ {exc}")
 
-
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("awaiting_broadcast", None)
     await update.message.reply_text("تم الإلغاء.")
-
 
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("awaiting_broadcast"):
@@ -159,8 +156,7 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("awaiting_broadcast", None)
         return
     context.user_data.pop("awaiting_broadcast", None)
-    sent = 0
-    failed = 0
+    sent = failed = 0
     for (uid, _, _) in admin_service.users(actor):
         try:
             await context.bot.send_message(chat_id=uid, text=update.message.text)
@@ -170,13 +166,13 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     storage.audit(actor, "broadcast", f"sent={sent}, failed={failed}")
     await update.message.reply_text(f"📢 اكتمل الإرسال.\n\n✅ نجح: {sent}\n⚠️ فشل: {failed}")
 
-
 if __name__ == "__main__":
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN غير موجود في متغيرات البيئة")
     storage.init()
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("labs", labs_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("setrole", setrole))
     app.add_handler(CommandHandler("cancel", cancel))
